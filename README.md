@@ -1,4 +1,4 @@
-# Audiobook-App
+# Audiobook
 
 Aplicativo (Python + Flet) para gerar **audiobooks em MP3** e um **`manifest.json`** a partir de conteúdos de estudo (PDF e/ou DOCX).
 
