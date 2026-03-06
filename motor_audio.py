@@ -183,17 +183,8 @@ def _read_docx_text(docx_path: str) -> str:
             if t:
                 chunks.append(t)
         else:
-            # Table
-            for row in block.rows:
-                cells = []
-                for cell in row.cells:
-                    tx = (cell.text or "").strip()
-                    if tx:
-                        # reduz quebras internas
-                        tx = re.sub(r"\s+", " ", tx)
-                        cells.append(tx)
-                if cells:
-                    chunks.append(" | ".join(cells))
+            # Table: preferência do projeto é ignorar 100% tabelas
+            continue
     return "\n".join(chunks)
 
 def limpar_texto_docx(texto: str) -> str:
@@ -224,12 +215,13 @@ def limpar_texto_docx(texto: str) -> str:
     texto2 = _apply_phonetics(" ".join(cleaned))
     return re.sub(r"\s+", " ", texto2).strip()
 
-async def gerar_preview_docx(pasta_docx, forcar=False):
-    # Gera somente 2 arquivos do teste: 101_1 e 102_1, mais os tópicos mestre 101 e 102.
+async def gerar_preview_docx(pasta_docx, preview_alvo="101_1", forcar=False):
+    # Gera somente o alvo solicitado no preview (101_1 por padrão; 102_1 sob demanda).
     pasta_docx = str(pasta_docx)
-    alvo_1 = os.path.join(pasta_docx, "meu_livro_101_1.docx")
-    alvo_2 = os.path.join(pasta_docx, "meu_livro_102_1.docx")
-    arquivos = [alvo_1, alvo_2]
+    if preview_alvo not in {"101_1", "102_1"}:
+        raise ValueError(f"Preview DOCX inválido: {preview_alvo}")
+    alvo = os.path.join(pasta_docx, f"meu_livro_{preview_alvo}.docx")
+    arquivos = [alvo]
     for a in arquivos:
         if not os.path.exists(a):
             raise FileNotFoundError(f"Arquivo DOCX não encontrado: {a}")
@@ -241,7 +233,7 @@ async def gerar_preview_docx(pasta_docx, forcar=False):
         fname = os.path.basename(docx_path)
         m = re.search(r"meu_livro_(10[1-4])_(\d+)\.docx$", fname, flags=re.I)
         if not m:
-            raise ValueError(f"Nome inválido para teste DOCX: {fname}")
+            raise ValueError(f"Nome inválido para preview DOCX: {fname}")
         cap = m.group(1)
         sub = m.group(2)
 

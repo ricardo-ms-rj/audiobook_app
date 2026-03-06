@@ -259,7 +259,7 @@ def main(page: ft.Page):
 
         page.update()
 
-    async def iniciar_processamento(preview: bool = False):
+    async def iniciar_processamento(preview: bool = False, preview_alvo: str = "101_1"):
         nonlocal pdf_selecionado
         if not pdf_selecionado:
             set_status("Selecione um PDF ou DOCX!")
@@ -272,7 +272,7 @@ def main(page: ft.Page):
             if pdf_selecionado.lower().endswith(".docx"):
                 pasta = Path(pdf_selecionado).resolve().parent
                 set_status("Gerando (DOCX teste)...")
-                await motor_audio.gerar_preview_docx(pasta, forcar=ui.cb_forcar.value)
+                await motor_audio.gerar_preview_docx(pasta, preview_alvo=preview_alvo, forcar=ui.cb_forcar.value)
                 set_status("Concluído!")
                 atualizar_lista_audios()
                 return
@@ -281,13 +281,20 @@ def main(page: ft.Page):
             motor = motor_audio.MotorAudio(pdf_selecionado)
 
             itens_full = motor.obter_sumario()
-            itens = itens_full[:3] if preview else itens_full
+            if preview:
+                alvo_chave = preview_alvo.replace("_", ".")
+                itens = [item for item in itens_full if alvo_chave in item[1]][:1]
+                if not itens:
+                    raise ValueError(f"Subtópico {preview_alvo} não encontrado no sumário.")
+            else:
+                itens = itens_full
 
             for idx, item in enumerate(itens):
                 set_status(f"Processando {idx+1}/{len(itens)}")
 
-                if (idx + 1) < len(itens_full):
-                    prox_pag_0based = itens_full[idx + 1][2] - 1
+                idx_real = itens_full.index(item)
+                if (idx_real + 1) < len(itens_full):
+                    prox_pag_0based = itens_full[idx_real + 1][2] - 1
                 else:
                     prox_pag_0based = motor.doc.page_count
 
@@ -303,7 +310,7 @@ def main(page: ft.Page):
             page.update()
 
     ui.btn_selecionar.on_click = lambda _: ui.file_picker.pick_files(allowed_extensions=["pdf","docx"])
-    ui.btn_preview.on_click = lambda _: run_task(iniciar_processamento(preview=True))
+    ui.btn_preview.on_click = lambda _: run_task(iniciar_processamento(preview=True, preview_alvo=ui.dd_preview_alvo.value or "101_1"))
     ui.btn_converter.on_click = lambda _: run_task(iniciar_processamento(preview=False))
     ui.btn_gerar_manifest.on_click = lambda _: (
         set_status("Selecione um PDF ou DOCX!") if not pdf_selecionado else (motor_audio.gerar_manifest(pdf_selecionado), atualizar_lista_audios())
