@@ -307,13 +307,15 @@ def main(page: ft.Page):
                     titulos = [str(i[1]) for i in itens_full]
                     raise ValueError(
                         "Subtópico de preview não encontrado no sumário. "
-                        f"Alvo: {preview_alvo}. Chaves encontradas: {chaves}. Títulos encontrados: {titulos}"
+                        f"PDF: {pdf_selecionado}. Alvo: {preview_alvo}. Chaves encontradas: {chaves}. Títulos encontrados: {titulos}"
                     )
             else:
                 itens = itens_full
 
+            resultados = []
             for idx, item in enumerate(itens):
-                set_status(f"Processando {idx+1}/{len(itens)}")
+                alvo = str(item[0]) if len(item) > 0 else str(item[1])
+                set_status(f"Processando {idx+1}/{len(itens)} ({alvo})")
 
                 idx_real = itens_full.index(item)
                 if (idx_real + 1) < len(itens_full):
@@ -321,10 +323,17 @@ def main(page: ft.Page):
                 else:
                     prox_pag_0based = motor.doc.page_count
 
-                await motor.extrair_e_converter(item, prox_pag_0based, forcar=ui.cb_forcar.value)
+                resultado = await motor.extrair_e_converter(item, prox_pag_0based, forcar=ui.cb_forcar.value)
+                resultados.append(resultado)
 
             motor_audio.gerar_manifest(pdf_selecionado)
-            set_status("Concluído!")
+            resumo = ", ".join(
+                [
+                    f"{Path(r['arquivo']).name} ({r['caracteres']} chars)" if r.get("status") == "ok" else f"{Path(r['arquivo']).name} (já existia)"
+                    for r in resultados
+                ]
+            )
+            set_status(f"Concluído! PDF preview/geração: {resumo}")
             atualizar_lista_audios()
         except Exception as ex:
             set_status(f"Erro: {ex}")

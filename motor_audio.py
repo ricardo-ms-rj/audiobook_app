@@ -19,6 +19,8 @@ DICIONARIO_FONETICO = {
     "etc.": "eticétera", "etc": "eticétera", "systemd": "sístem dê",
 }
 
+URL_PATTERN = re.compile(r"https?://\S+", flags=re.I)
+
 HEADER_FOOTER_PATTERNS = [
     r"LPIC-1\s*\(\d{3}\)\s*\(Version\s*[\d\.]+\)", r"learning\.lpi\.org",
     r"Licenciado sob CC BY-NC-ND", r"Version:\s*[\d\.]+", r"^\s*\d+\s*$", r"^\d+\s*\|\s*learning",
@@ -36,7 +38,31 @@ def _apply_phonetics(text):
         word = m.group(0)
         if not re.search(r'[aeiouAEIOU]', word) and len(word) >= 2: return " ".join(list(word))
         return word
-    return re.sub(r'\b[a-zA-Z]{2,4}\b', soletra_desconhecido, text)
+
+    def _normalizar_caminho_linux(match):
+        caminho = match.group(0)
+        if not caminho.startswith("/"):
+            return caminho
+        segmentos = [seg for seg in caminho.strip("/").split("/") if seg]
+        if not segmentos:
+            return "barra"
+        falado = " ".join([f"barra {seg}" for seg in segmentos])
+        if caminho.endswith("/"):
+            falado += " barra"
+        return falado
+
+    urls = []
+    def _stash_url(m):
+        urls.append(m.group(0))
+        return f"__URL_KEEP_{len(urls)-1}__"
+
+    text = URL_PATTERN.sub(_stash_url, text)
+    text = re.sub(r'(?<!\w)/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+/?', _normalizar_caminho_linux, text)
+    text = re.sub(r'\b[a-zA-Z]{2,4}\b', soletra_desconhecido, text)
+
+    for i, url in enumerate(urls):
+        text = text.replace(f"__URL_KEEP_{i}__", url)
+    return text
 
 def limpar_texto(texto):
     texto = texto.replace("•", "").replace("·", "").replace("⁄", "/").replace("∕", "/")
@@ -107,15 +133,32 @@ class MotorAudio:
         return filtrado
     async def extrair_e_converter(self, item_sumario, proxima_pag_0based, forcar=False):
         caminho = os.path.join(PASTA_SAIDA, _nome_deterministico(item_sumario[1]))
-        if not forcar and os.path.exists(caminho): return True
+        alvo = str(item_sumario[0]) if len(item_sumario) > 0 else str(item_sumario[1])
+        if not forcar and os.path.exists(caminho):
+            return {"status": "skip", "arquivo": caminho, "alvo": alvo, "caracteres": None}
         self.abrir_doc()
         pag_inicio = max(0, item_sumario[2] - 1) if ".1 " in item_sumario[1] else item_sumario[2] - 1
         texto = []
         for p in range(pag_inicio, proxima_pag_0based):
             page = self.doc[p]
             texto.append(page.get_text("text", clip=fitz.Rect(0, 0, page.rect.width, page.rect.height - 45)))
-        await edge_tts.Communicate(limpar_texto("\n".join(texto)), VOZ, rate=RATE).save(caminho)
-        return True
+        texto_limpo = limpar_texto("\n".join(texto))
+        qtd_chars = len(texto_limpo)
+        if qtd_chars == 0:
+            raise ValueError(
+                f"Texto vazio após extração/limpeza. PDF: {self.caminho_pdf} | Alvo: {alvo} | Caracteres extraídos: {qtd_chars}"
+            )
+        try:
+            await edge_tts.Communicate(texto_limpo, VOZ, rate=RATE).save(caminho)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Falha ao salvar MP3. PDF: {self.caminho_pdf} | Alvo: {alvo} | Caracteres extraídos: {qtd_chars} | Destino: {caminho}"
+            ) from exc
+        if not os.path.exists(caminho) or os.path.getsize(caminho) == 0:
+            raise RuntimeError(
+                f"MP3 não foi gerado corretamente. PDF: {self.caminho_pdf} | Alvo: {alvo} | Caracteres extraídos: {qtd_chars} | Destino: {caminho}"
+            )
+        return {"status": "ok", "arquivo": caminho, "alvo": alvo, "caracteres": qtd_chars}
 
 
 # ---------------------------
@@ -215,6 +258,41 @@ def limpar_texto_docx(texto: str) -> str:
     texto2 = _apply_phonetics(" ".join(cleaned))
     return re.sub(r"\s+", " ", texto2).strip()
 
+
+def _remover_bloco_mestre_do_inicio(raw_text: str, cap: str, sub: str, master_title: str) -> str:
+    if sub not in {"1"}:
+        return raw_text
+
+    linhas = [ln.strip() for ln in raw_text.splitlines()]
+    if not linhas:
+        return raw_text
+
+    master_rx = re.compile(rf"^t[óo]pico\s+{re.escape(cap)}\b", flags=re.I)
+    sub_rx = re.compile(rf"\b{re.escape(cap)}\.{re.escape(sub)}\b", flags=re.I)
+    master_norm = re.sub(r"\s+", " ", master_title.lower()).strip()
+
+    idx_sub = None
+    for i, ln in enumerate(linhas[:30]):
+        if sub_rx.search(ln):
+            idx_sub = i
+            break
+
+    if idx_sub is None or idx_sub <= 0:
+        return raw_text
+
+    prefix = linhas[:idx_sub]
+    has_master = False
+    for ln in prefix:
+        ln_norm = re.sub(r"\s+", " ", ln.lower()).strip()
+        if master_rx.search(ln) or ln_norm == master_norm:
+            has_master = True
+            break
+
+    if not has_master:
+        return raw_text
+
+    return "\n".join(linhas[idx_sub:])
+
 def _listar_docx_subtopicos(pasta_docx: str) -> list[str]:
     pasta = Path(pasta_docx)
     encontrados = []
@@ -253,6 +331,7 @@ async def _gerar_docx(pasta_docx, preview_alvo=None, forcar=False):
 
         raw = _read_docx_text(docx_path)
         master_title, sub_title = _extract_titles_from_text(raw, cap, sub)
+        raw_body = _remover_bloco_mestre_do_inicio(raw, cap, sub, master_title)
 
         # 1) tópico mestre (curto)
         master_mp3 = os.path.join(PASTA_SAIDA, f"{cap}.mp3")
@@ -270,9 +349,9 @@ async def _gerar_docx(pasta_docx, preview_alvo=None, forcar=False):
         # 2) subtópico
         sub_mp3 = os.path.join(PASTA_SAIDA, f"{cap}_{sub}.mp3")
         if forcar or not os.path.exists(sub_mp3):
-            body = limpar_texto_docx(raw)
+            body = limpar_texto_docx(raw_body)
             # garante que o áudio começa pelos títulos desejados
-            texto_final = f"{master_title}. {sub_title}. {body}".strip()
+            texto_final = f"{sub_title}. {body}".strip()
             await edge_tts.Communicate(texto_final, VOZ, rate=RATE).save(sub_mp3)
 
         manifest[f"item_{idx:03d}"] = {
