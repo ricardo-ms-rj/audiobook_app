@@ -4,6 +4,7 @@ import motor_audio
 import asyncio
 import json
 import inspect
+import re
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -259,7 +260,7 @@ def main(page: ft.Page):
 
         page.update()
 
-    async def iniciar_processamento(preview: bool = False):
+    async def iniciar_processamento(preview: bool = False, preview_alvo: str = "101_1"):
         nonlocal pdf_selecionado
         if not pdf_selecionado:
             set_status("Selecione um PDF ou DOCX!")
@@ -268,11 +269,15 @@ def main(page: ft.Page):
         ui.progresso.visible = True
         set_status("Gerando...")
         try:
-            # Modo DOCX (teste controlado): Preview gera apenas 101_1 e 102_1 (mais 101 e 102 mestres).
+            # Modo DOCX: preview gera só alvo selecionado; completo processa todos os subtópicos existentes.
             if pdf_selecionado.lower().endswith(".docx"):
                 pasta = Path(pdf_selecionado).resolve().parent
-                set_status("Gerando (DOCX teste)...")
-                await motor_audio.gerar_preview_docx(pasta, forcar=ui.cb_forcar.value)
+                if preview:
+                    set_status(f"Gerando preview DOCX ({preview_alvo})...")
+                    await motor_audio.gerar_preview_docx(pasta, preview_alvo=preview_alvo, forcar=ui.cb_forcar.value)
+                else:
+                    set_status("Gerando completo DOCX...")
+                    await motor_audio.gerar_completo_docx(pasta, forcar=ui.cb_forcar.value)
                 set_status("Concluído!")
                 atualizar_lista_audios()
                 return
@@ -281,20 +286,54 @@ def main(page: ft.Page):
             motor = motor_audio.MotorAudio(pdf_selecionado)
 
             itens_full = motor.obter_sumario()
-            itens = itens_full[:3] if preview else itens_full
+            if preview:
+                itens = []
+                alvo_norm = preview_alvo.strip().lower()
+                alvo_dot = alvo_norm.replace("_", ".")
+                regex_alvo = re.compile(rf"\b{re.escape(alvo_dot)}\b")
 
+                for item in itens_full:
+                    chave = str(item[0]).strip().lower() if len(item) > 0 else ""
+                    titulo = str(item[1]).strip().lower() if len(item) > 1 else ""
+                    if chave == alvo_norm or chave == alvo_dot:
+                        itens = [item]
+                        break
+                    if regex_alvo.search(titulo):
+                        itens = [item]
+                        break
+
+                if not itens:
+                    chaves = [str(i[0]) for i in itens_full]
+                    titulos = [str(i[1]) for i in itens_full]
+                    raise ValueError(
+                        "Subtópico de preview não encontrado no sumário. "
+                        f"PDF: {pdf_selecionado}. Alvo: {preview_alvo}. Chaves encontradas: {chaves}. Títulos encontrados: {titulos}"
+                    )
+            else:
+                itens = itens_full
+
+            resultados = []
             for idx, item in enumerate(itens):
-                set_status(f"Processando {idx+1}/{len(itens)}")
+                alvo = str(item[0]) if len(item) > 0 else str(item[1])
+                set_status(f"Processando {idx+1}/{len(itens)} ({alvo})")
 
-                if (idx + 1) < len(itens_full):
-                    prox_pag_0based = itens_full[idx + 1][2] - 1
+                idx_real = itens_full.index(item)
+                if (idx_real + 1) < len(itens_full):
+                    prox_pag_0based = itens_full[idx_real + 1][2] - 1
                 else:
                     prox_pag_0based = motor.doc.page_count
 
-                await motor.extrair_e_converter(item, prox_pag_0based, forcar=ui.cb_forcar.value)
+                resultado = await motor.extrair_e_converter(item, prox_pag_0based, forcar=ui.cb_forcar.value)
+                resultados.append(resultado)
 
             motor_audio.gerar_manifest(pdf_selecionado)
-            set_status("Concluído!")
+            resumo = ", ".join(
+                [
+                    f"{Path(r['arquivo']).name} ({r['caracteres']} chars)" if r.get("status") == "ok" else f"{Path(r['arquivo']).name} (já existia)"
+                    for r in resultados
+                ]
+            )
+            set_status(f"Concluído! PDF preview/geração: {resumo}")
             atualizar_lista_audios()
         except Exception as ex:
             set_status(f"Erro: {ex}")
@@ -303,7 +342,7 @@ def main(page: ft.Page):
             page.update()
 
     ui.btn_selecionar.on_click = lambda _: ui.file_picker.pick_files(allowed_extensions=["pdf","docx"])
-    ui.btn_preview.on_click = lambda _: run_task(iniciar_processamento(preview=True))
+    ui.btn_preview.on_click = lambda _: run_task(iniciar_processamento(preview=True, preview_alvo=ui.dd_preview_alvo.value or "101_1"))
     ui.btn_converter.on_click = lambda _: run_task(iniciar_processamento(preview=False))
     ui.btn_gerar_manifest.on_click = lambda _: (
         set_status("Selecione um PDF ou DOCX!") if not pdf_selecionado else (motor_audio.gerar_manifest(pdf_selecionado), atualizar_lista_audios())

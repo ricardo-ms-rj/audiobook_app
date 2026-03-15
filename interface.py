@@ -16,9 +16,18 @@ class InterfaceApp:
         )
 
         self.btn_selecionar = ft.ElevatedButton("Selecionar PDF", icon="folder_open")
-        self.btn_preview = ft.ElevatedButton("Preview (1-3)", icon="speed")
+        self.btn_preview = ft.ElevatedButton("Preview", icon="speed")
         self.btn_converter = ft.ElevatedButton("Gerar Completo", icon="play_arrow")
         self.btn_gerar_manifest = ft.ElevatedButton("Gerar Manifest", icon="assignment")
+        self.dd_preview_alvo = ft.Dropdown(
+            label="Preview",
+            value="101_1",
+            options=[
+                ft.dropdown.Option("101_1"),
+                ft.dropdown.Option("102_1"),
+            ],
+            width=180,
+        )
 
         self.status_texto = ft.Text("Pronto.", weight="bold")
         self.progresso = ft.ProgressBar(visible=False)
@@ -58,6 +67,7 @@ class InterfaceApp:
                     self.btn_selecionar,
                     self.caminho_pdf_label,
                     self.cb_forcar,
+                    self.dd_preview_alvo,
                     ft.Divider(),
                     ft.Row([self.btn_preview, self.btn_converter, self.btn_gerar_manifest], wrap=True),
                     self.progresso,
