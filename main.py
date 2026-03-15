@@ -4,6 +4,7 @@ import motor_audio
 import asyncio
 import json
 import inspect
+import re
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -268,11 +269,15 @@ def main(page: ft.Page):
         ui.progresso.visible = True
         set_status("Gerando...")
         try:
-            # Modo DOCX (teste controlado): Preview gera apenas 101_1 e 102_1 (mais 101 e 102 mestres).
+            # Modo DOCX: preview gera só alvo selecionado; completo processa todos os subtópicos existentes.
             if pdf_selecionado.lower().endswith(".docx"):
                 pasta = Path(pdf_selecionado).resolve().parent
-                set_status("Gerando (DOCX teste)...")
-                await motor_audio.gerar_preview_docx(pasta, preview_alvo=preview_alvo, forcar=ui.cb_forcar.value)
+                if preview:
+                    set_status(f"Gerando preview DOCX ({preview_alvo})...")
+                    await motor_audio.gerar_preview_docx(pasta, preview_alvo=preview_alvo, forcar=ui.cb_forcar.value)
+                else:
+                    set_status("Gerando completo DOCX...")
+                    await motor_audio.gerar_completo_docx(pasta, forcar=ui.cb_forcar.value)
                 set_status("Concluído!")
                 atualizar_lista_audios()
                 return
@@ -282,10 +287,28 @@ def main(page: ft.Page):
 
             itens_full = motor.obter_sumario()
             if preview:
-                alvo_chave = preview_alvo.replace("_", ".")
-                itens = [item for item in itens_full if alvo_chave in item[1]][:1]
+                itens = []
+                alvo_norm = preview_alvo.strip().lower()
+                alvo_dot = alvo_norm.replace("_", ".")
+                regex_alvo = re.compile(rf"\b{re.escape(alvo_dot)}\b")
+
+                for item in itens_full:
+                    chave = str(item[0]).strip().lower() if len(item) > 0 else ""
+                    titulo = str(item[1]).strip().lower() if len(item) > 1 else ""
+                    if chave == alvo_norm or chave == alvo_dot:
+                        itens = [item]
+                        break
+                    if regex_alvo.search(titulo):
+                        itens = [item]
+                        break
+
                 if not itens:
-                    raise ValueError(f"Subtópico {preview_alvo} não encontrado no sumário.")
+                    chaves = [str(i[0]) for i in itens_full]
+                    titulos = [str(i[1]) for i in itens_full]
+                    raise ValueError(
+                        "Subtópico de preview não encontrado no sumário. "
+                        f"Alvo: {preview_alvo}. Chaves encontradas: {chaves}. Títulos encontrados: {titulos}"
+                    )
             else:
                 itens = itens_full
 

@@ -215,16 +215,30 @@ def limpar_texto_docx(texto: str) -> str:
     texto2 = _apply_phonetics(" ".join(cleaned))
     return re.sub(r"\s+", " ", texto2).strip()
 
-async def gerar_preview_docx(pasta_docx, preview_alvo="101_1", forcar=False):
-    # Gera somente o alvo solicitado no preview (101_1 por padrão; 102_1 sob demanda).
+def _listar_docx_subtopicos(pasta_docx: str) -> list[str]:
+    pasta = Path(pasta_docx)
+    encontrados = []
+    for path in sorted(pasta.glob("meu_livro_10[1-4]_*.docx")):
+        m = re.match(r"meu_livro_(10[1-4])_(\d+)\.docx$", path.name, flags=re.I)
+        if not m:
+            continue
+        encontrados.append(f"{m.group(1)}_{m.group(2)}")
+    return encontrados
+
+
+async def _gerar_docx(pasta_docx, preview_alvo=None, forcar=False):
     pasta_docx = str(pasta_docx)
-    if preview_alvo not in {"101_1", "102_1"}:
-        raise ValueError(f"Preview DOCX inválido: {preview_alvo}")
-    alvo = os.path.join(pasta_docx, f"meu_livro_{preview_alvo}.docx")
-    arquivos = [alvo]
-    for a in arquivos:
-        if not os.path.exists(a):
-            raise FileNotFoundError(f"Arquivo DOCX não encontrado: {a}")
+    alvos_existentes = _listar_docx_subtopicos(pasta_docx)
+    if preview_alvo is not None:
+        if preview_alvo not in {"101_1", "102_1"}:
+            raise ValueError(f"Preview DOCX inválido: {preview_alvo}")
+        if preview_alvo not in alvos_existentes:
+            raise FileNotFoundError(f"Arquivo DOCX não encontrado para preview: meu_livro_{preview_alvo}.docx")
+        alvos_existentes = [preview_alvo]
+
+    arquivos = [os.path.join(pasta_docx, f"meu_livro_{k}.docx") for k in alvos_existentes]
+    if not arquivos:
+        raise FileNotFoundError(f"Nenhum arquivo DOCX no padrão esperado em: {pasta_docx}")
 
     manifest = {}
     idx = 0
@@ -273,3 +287,13 @@ async def gerar_preview_docx(pasta_docx, preview_alvo="101_1", forcar=False):
         json.dump(manifest, f, indent=4, ensure_ascii=False)
 
     return manifest
+
+
+async def gerar_preview_docx(pasta_docx, preview_alvo="101_1", forcar=False):
+    # Gera somente o alvo solicitado no preview (101_1 por padrão; 102_1 sob demanda).
+    return await _gerar_docx(pasta_docx, preview_alvo=preview_alvo, forcar=forcar)
+
+
+async def gerar_completo_docx(pasta_docx, forcar=False):
+    # Gera todos os DOCX existentes no padrão meu_livro_10x_y.docx (ex.: pula 104_4 se não existir).
+    return await _gerar_docx(pasta_docx, preview_alvo=None, forcar=forcar)
